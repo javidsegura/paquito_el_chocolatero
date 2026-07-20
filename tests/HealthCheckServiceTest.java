@@ -1,273 +1,96 @@
-package com.citi.ci.batch.batchcmdb.twshealthcheck.service;
+@Test
+void performHealthCheck_connectTimeoutException_savesInactiveWithErrorMessage() throws Exception {
+    stubControllerForTwsCall();
+    when(adminService.findAllControllers()).thenReturn(List.of(controller));
+    when(encryptionUtil.decrypt(anyString())).thenThrow(mock(ConnectTimeoutException.class));
+    when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
 
-// very likely need to adjust:
-//   - Controller getter names (getName/getUsername/getPassword/getTwsURI/getVersion/getEngineName
-//     are assumed; fix any that don't match your real Controller class)
-//   - CustomException's constructor (assumed CustomException(String, Throwable))
-//   - QueryFilterModel / JobStreamHeader (assumed simple types with no special constructor needs)
-//   - the exact package of Controller, CustomException, SecureCredentials, EncryptionUtil,
-//     TWSRequestUtil, AdminService, TwsApplicationValidationService, QueryFilterModel,
-//     JobStreamHeader (import statements below are best guesses at com.citi.ci.batch.batchcmdb.*)
-//
-// Move this file to:
-//   src/test/java/com/citi/ci/batch/batchcmdb/twshealthcheck/service/HealthCheckServiceTest.java
+    ArgumentCaptor<HealthCheckResultDocument> captor = ArgumentCaptor.forClass(HealthCheckResultDocument.class);
+    healthCheckService.performHealthCheck();
 
-import com.citi.ci.batch.batchcmdb.entities.Controller;
-import com.citi.ci.batch.batchcmdb.exeptions.CustomException;
-import com.citi.ci.batch.batchcmdb.services.AdminService;
-import com.citi.ci.batch.batchcmdb.twshealthcheck.model.HealthCheckResultDocument;
-import com.citi.ci.batch.batchcmdb.twshealthcheck.repository.HealthCheckResultRepository;
-import com.citi.ci.batch.batchcmdb.util.EncryptionUtil;
-import com.citi.ci.batch.batchcmdb.util.TWSRequestUtil;
+    verify(healthCheckResultRepository, times(1)).save(captor.capture());
+    assertFalse(captor.getValue().isActive());
+    assertEquals("TWS service unavailable", captor.getValue().getErrorMessage());
+}
 
-import org.apache.http.conn.ConnectTimeoutException;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
+Same shape for the other two single-controller ones, swap the stub and expected message:
 
-import java.net.InetAddress;
-import java.time.Instant;
-import java.util.Collections;
-import java.util.List;
+@Test
+void performHealthCheck_httpClientErrorException_savesInactiveWithErrorMessage() throws Exception {
+    stubControllerForTwsCall();
+    when(adminService.findAllControllers()).thenReturn(List.of(controller));
+    when(encryptionUtil.decrypt(anyString())).thenReturn("decryptedPassword");
+    when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
+    when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
+            .thenThrow(HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request", null, null, null));
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+    ArgumentCaptor<HealthCheckResultDocument> captor = ArgumentCaptor.forClass(HealthCheckResultDocument.class);
+    healthCheckService.performHealthCheck();
 
-@ExtendWith(MockitoExtension.class)
-class HealthCheckServiceTest {
+    verify(healthCheckResultRepository, times(1)).save(captor.capture());
+    assertFalse(captor.getValue().isActive());
+    assertEquals("Invalid request to TWS", captor.getValue().getErrorMessage());
+}
 
-    @InjectMocks
-    private HealthCheckService healthCheckService;
+@Test
+void performHealthCheck_httpServerErrorException_savesInactiveWithErrorMessage() throws Exception {
+    stubControllerForTwsCall();
+    when(adminService.findAllControllers()).thenReturn(List.of(controller));
+    when(encryptionUtil.decrypt(anyString())).thenReturn("decryptedPassword");
+    when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
+    when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
+            .thenThrow(HttpServerErrorException.create(HttpStatus.INTERNAL_SERVER_ERROR, "Server Error", null, null, null));
 
-    @Mock
-    private AdminService adminService;
-    @Mock
-    private TWSRequestUtil twsRequestUtil;
-    @Mock
-    private HealthCheckResultRepository healthCheckResultRepository;
-    @Mock
-    private com.citi.ci.batch.batchcmdb.services.TwsApplicationValidationService twsApplicationValidationService;
-    @Mock
-    private EncryptionUtil encryptionUtil;
+    ArgumentCaptor<HealthCheckResultDocument> captor = ArgumentCaptor.forClass(HealthCheckResultDocument.class);
+    healthCheckService.performHealthCheck();
 
-    private Controller controller;
+    verify(healthCheckResultRepository, times(1)).save(captor.capture());
+    assertFalse(captor.getValue().isActive());
+    assertEquals("TWS service error", captor.getValue().getErrorMessage());
+}
 
-    @BeforeEach
-    void setUp() {
-        controller = mock(Controller.class);
-        when(controller.getName()).thenReturn("TWCB");
-        when(controller.getUsername()).thenReturn("someUser");
-        when(controller.getPassword()).thenReturn("encryptedPassword");
-        when(controller.getTwsURI()).thenReturn("https://tws.example.com");
-        when(controller.getVersion()).thenReturn("v1");
-        when(controller.getEngineName()).thenReturn("engine1");
-    }
+@Test
+void performHealthCheck_unexpectedException_savesInactiveWithErrorMessage() throws Exception {
+    stubControllerForTwsCall();
+    when(adminService.findAllControllers()).thenReturn(List.of(controller));
+    when(encryptionUtil.decrypt(anyString())).thenReturn("decryptedPassword");
+    when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
+    when(twsRequestUtil.callTWS(anyString(), any(), any(), any())).thenThrow(new RuntimeException("boom"));
 
-    // ---- no controllers ----
+    ArgumentCaptor<HealthCheckResultDocument> captor = ArgumentCaptor.forClass(HealthCheckResultDocument.class);
+    healthCheckService.performHealthCheck();
 
-    @Test
-    void performHealthCheck_noControllers_savesNothing() {
-        // Arrange
-        when(adminService.findAllControllers()).thenReturn(Collections.emptyList());
+    verify(healthCheckResultRepository, times(1)).save(captor.capture());
+    assertFalse(captor.getValue().isActive());
+    assertEquals("Validation service error", captor.getValue().getErrorMessage());
+}
 
-        // Act
-        healthCheckService.performHealthCheck();
+Last one, the multi-controller test. Note from your screenshot: your secondController mock is only stubbed for getName(), so once the loop actually reaches it (which it now does), its getUsername()/getPassword() return null, which is exactly the IllegalArgumentException: Username and password cannot be null you're seeing from SecureCredentials. That's not a bug, it's just that this test now needs secondController fully stubbed since it's genuinely processed:
 
-        // Assert
-        verify(healthCheckResultRepository, never()).save(any(HealthCheckResultDocument.class));
-    }
+@Test
+void performHealthCheck_firstControllerFails_secondControllerStillProcessed() throws Exception {
+    stubControllerForTwsCall();
+    Controller secondController = mock(Controller.class);
+    lenient().when(secondController.getName()).thenReturn("OPCY");
+    when(secondController.getUsername()).thenReturn("someUser2");
+    when(secondController.getPassword()).thenReturn("encryptedPassword2");
+    when(secondController.getTwsURI()).thenReturn("https://tws2.example.com");
+    when(secondController.getVersion()).thenReturn("v1");
+    when(secondController.getEngineName()).thenReturn("engine2");
 
-    // ---- happy path ----
+    when(adminService.findAllControllers()).thenReturn(List.of(controller, secondController));
+    when(encryptionUtil.decrypt(anyString())).thenReturn("decryptedPassword");
+    when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
+    when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
+            .thenThrow(new RuntimeException("boom"))
+            .thenReturn(ResponseEntity.status(HttpStatus.OK).body(new Object[0]));
 
-    @Test
-    void performHealthCheck_successfulResponse_savesActiveDocumentWithExpectedFields() throws Exception {
-        // Arrange
-        when(adminService.findAllControllers()).thenReturn(List.of(controller));
-        when(encryptionUtil.decrypt("encryptedPassword")).thenReturn("decryptedPassword");
-        when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
-        when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
-                .thenReturn(ResponseEntity.status(HttpStatus.OK).body(new Object[0]));
+    healthCheckService.performHealthCheck();
 
-        ArgumentCaptor<HealthCheckResultDocument> captor =
-                ArgumentCaptor.forClass(HealthCheckResultDocument.class);
-
-        // Act
-        healthCheckService.performHealthCheck();
-
-        // Assert
-        verify(healthCheckResultRepository, times(1)).save(captor.capture());
-        HealthCheckResultDocument saved = captor.getValue();
-
-        assertEquals("TWCB", saved.getControllerName());
-        assertTrue(saved.isActive());
-        assertNotNull(saved.getCheckTriggeredAt());
-        assertNotNull(saved.getResponseReceivedAt());
-        assertTrue(saved.getRequestTimeMs() >= 0);
-        assertEquals(InetAddress.getLocalHost().getHostName(), saved.getFromServer());
-    }
-
-    @Test
-    void performHealthCheck_nonSuccessStatusCode_savesInactiveWithErrorMessage() {
-        // Arrange
-        when(adminService.findAllControllers()).thenReturn(List.of(controller));
-        when(encryptionUtil.decrypt("encryptedPassword")).thenReturn("decryptedPassword");
-        when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
-        when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
-                .thenReturn(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(new Object[0]));
-
-        ArgumentCaptor<HealthCheckResultDocument> captor =
-                ArgumentCaptor.forClass(HealthCheckResultDocument.class);
-
-        // Act
-        healthCheckService.performHealthCheck();
-
-        // Assert
-        verify(healthCheckResultRepository, times(1)).save(captor.capture());
-        HealthCheckResultDocument saved = captor.getValue();
-
-        assertFalse(saved.isActive());
-        assertNotNull(saved.getErrorMessage());
-        assertTrue(saved.getErrorMessage().contains("503"));
-    }
-
-    // ---- null response handling ----
-    // performHealthCheckOnController now null-checks the TWS response before touching
-    // getStatusCode(), setting active=false + an error message instead of letting an NPE
-    // escape. Unlike the exception branches below, this path does NOT throw, so the loop
-    // continues and the document still gets saved normally.
-
-    @Test
-    void performHealthCheck_nullResponse_savesInactiveWithErrorMessageAndDoesNotThrow() {
-        // Arrange
-        when(adminService.findAllControllers()).thenReturn(List.of(controller));
-        when(encryptionUtil.decrypt("encryptedPassword")).thenReturn("decryptedPassword");
-        when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
-        when(twsRequestUtil.callTWS(anyString(), any(), any(), any())).thenReturn(null);
-
-        ArgumentCaptor<HealthCheckResultDocument> captor =
-                ArgumentCaptor.forClass(HealthCheckResultDocument.class);
-
-        // Act
-        healthCheckService.performHealthCheck();
-
-        // Assert
-        verify(healthCheckResultRepository, times(1)).save(captor.capture());
-        HealthCheckResultDocument saved = captor.getValue();
-
-        assertFalse(saved.isActive());
-        assertNotNull(saved.getErrorMessage());
-        // TODO: tighten this to your exact error message text, e.g.:
-        // assertEquals("No response received from TWS API", saved.getErrorMessage());
-    }
-
-    // ---- exception branches on performHealthCheckOnController ----
-
-    @Test
-    void performHealthCheck_connectTimeoutException_throwsCustomExceptionAndDoesNotSave() {
-        // Arrange
-        when(adminService.findAllControllers()).thenReturn(List.of(controller));
-        when(encryptionUtil.decrypt("encryptedPassword")).thenReturn("decryptedPassword");
-        when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
-        when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
-                .thenThrow(mock(ConnectTimeoutException.class));
-
-        // Act / Assert
-        CustomException thrown = assertThrows(CustomException.class,
-                () -> healthCheckService.performHealthCheck());
-        assertEquals("TWS service unavailable", thrown.getMessage());
-        verify(healthCheckResultRepository, never()).save(any(HealthCheckResultDocument.class));
-    }
-
-    @Test
-    void performHealthCheck_httpClientErrorException_throwsCustomExceptionAndDoesNotSave() {
-        // Arrange
-        when(adminService.findAllControllers()).thenReturn(List.of(controller));
-        when(encryptionUtil.decrypt("encryptedPassword")).thenReturn("decryptedPassword");
-        when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
-        when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
-                .thenThrow(HttpClientErrorException.create(HttpStatus.BAD_REQUEST,
-                        "Bad Request", null, null, null));
-
-        // Act / Assert
-        CustomException thrown = assertThrows(CustomException.class,
-                () -> healthCheckService.performHealthCheck());
-        assertEquals("Invalid request to TWS", thrown.getMessage());
-        verify(healthCheckResultRepository, never()).save(any(HealthCheckResultDocument.class));
-    }
-
-    @Test
-    void performHealthCheck_httpServerErrorException_throwsCustomExceptionAndDoesNotSave() {
-        // Arrange
-        when(adminService.findAllControllers()).thenReturn(List.of(controller));
-        when(encryptionUtil.decrypt("encryptedPassword")).thenReturn("decryptedPassword");
-        when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
-        when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
-                .thenThrow(HttpServerErrorException.create(HttpStatus.INTERNAL_SERVER_ERROR,
-                        "Server Error", null, null, null));
-
-        // Act / Assert
-        CustomException thrown = assertThrows(CustomException.class,
-                () -> healthCheckService.performHealthCheck());
-        assertEquals("TWS service error", thrown.getMessage());
-        verify(healthCheckResultRepository, never()).save(any(HealthCheckResultDocument.class));
-    }
-
-    @Test
-    void performHealthCheck_unexpectedException_throwsCustomExceptionAndDoesNotSave() {
-        // Arrange
-        when(adminService.findAllControllers()).thenReturn(List.of(controller));
-        when(encryptionUtil.decrypt("encryptedPassword")).thenReturn("decryptedPassword");
-        when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
-        when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
-                .thenThrow(new RuntimeException("boom"));
-
-        // Act / Assert
-        CustomException thrown = assertThrows(CustomException.class,
-                () -> healthCheckService.performHealthCheck());
-        assertEquals("Validation service error", thrown.getMessage());
-        verify(healthCheckResultRepository, never()).save(any(HealthCheckResultDocument.class));
-    }
-
-    // ---- multi-controller behavior ----
-    // Documents CURRENT behavior for genuine thrown exceptions (timeouts/HTTP errors/etc,
-    // as opposed to the null-response case above which is now handled without throwing):
-    // a thrown exception on one controller still aborts the whole run, so later
-    // controllers never get checked or saved. If a future refactor makes the loop
-    // continue past a failing controller instead, update/replace this test to match.
-
-    @Test
-    void performHealthCheck_firstControllerFails_secondControllerNeverProcessed() {
-        // Arrange
-        Controller secondController = mock(Controller.class);
-        when(secondController.getName()).thenReturn("OPCY");
-
-        when(adminService.findAllControllers()).thenReturn(List.of(controller, secondController));
-        when(encryptionUtil.decrypt(anyString())).thenReturn("decryptedPassword");
-        when(twsApplicationValidationService.setFilter(anyString())).thenReturn(null);
-        when(twsRequestUtil.callTWS(anyString(), any(), any(), any()))
-                .thenThrow(new RuntimeException("boom"));
-
-        // Act / Assert
-        assertThrows(CustomException.class, () -> healthCheckService.performHealthCheck());
-        verify(healthCheckResultRepository, never()).save(any(HealthCheckResultDocument.class));
-        // secondController's TWS call is never reached because the loop aborts on the first failure
-    }
+    ArgumentCaptor<HealthCheckResultDocument> captor = ArgumentCaptor.forClass(HealthCheckResultDocument.class);
+    verify(healthCheckResultRepository, times(2)).save(captor.capture());
+    List<HealthCheckResultDocument> saved = captor.getAllValues();
+    assertFalse(saved.get(0).isActive());
+    assertEquals("Validation service error", saved.get(0).getErrorMessage());
+    assertTrue(saved.get(1).isActive());
 }
