@@ -18,6 +18,8 @@ db.health_check_results.aggregate([
 
 Confirms rows come back with `controllerName`, `active`, `errorMessage`, `requestTimeMs`.
 
+**Panel type:** Table. Just raw rows, no aggregation shape to visualize.
+
 ## 2. Latest status per controller
 
 Current-state snapshot, not a trend. Old docs get purged by the stale-result cleanup, so
@@ -37,6 +39,9 @@ db.health_check_results.aggregate([
 ])
 ```
 
+**Panel type:** Table, one row per controller. Add a cell-value threshold/color mapping on
+`active` (green/red) so failures are visible at a glance without a separate stat panel.
+
 ## 3. Active vs inactive count
 
 ```
@@ -44,6 +49,9 @@ db.health_check_results.aggregate([
   { "$group": { "_id": "$active", "count": { "$sum": 1 } } }
 ])
 ```
+
+**Panel type:** Pie chart or Bar gauge, two categories (`true`/`false`). A plain Stat panel
+also works if you only care about one number (e.g. count of `active: false`).
 
 ## 4. Request time, short window
 
@@ -55,6 +63,10 @@ db.health_check_results.aggregate([
 ])
 ```
 
+**Panel type:** Time series, `checkTriggeredAt` as the time field, `requestTimeMs` as the
+value, split/colored by `controllerName`. The one query here that's genuinely a proper
+timeseries shape rather than a snapshot.
+
 ## 5. Error breakdown for failing controllers
 
 ```
@@ -63,6 +75,9 @@ db.health_check_results.aggregate([
   { "$group": { "_id": "$errorMessage", "count": { "$sum": 1 }, "controllers": { "$addToSet": "$controllerName" } } }
 ])
 ```
+
+**Panel type:** Bar chart (count per `errorMessage`) or Table if you want the
+`controllers` array visible per row, bar charts don't render array-valued fields well.
 
 ## 6. Confirm stale-cleanup is purging old docs
 
@@ -74,3 +89,5 @@ db.health_check_results.aggregate([
   { "$count": "staleDocsRemaining" }
 ])
 ```
+
+**Panel type:** Stat panel, single number.
